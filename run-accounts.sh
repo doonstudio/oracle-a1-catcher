@@ -9,16 +9,27 @@
 # Ortak (istege bagli):
 #   ssh.pub        yeni sunuculara yuklenecek SSH acik anahtari
 #   notify_url     ntfy adresi, orn. https://ntfy.sh/<rastgele-konu>
+#   notify_token   giris isteyen ntfy sunucusu icin erisim token'i (tk_...)
 #
 # Kullanim:
 #   run-accounts.sh            her hesap icin tek tur (cron: */5 * * * *)
 #   run-accounts.sh --summary  her hesabin son durumunu bildirir (cron: gunde bir)
+#   run-accounts.sh --test     test bildirimi gonderir, sonucu ekrana yazar
 set -u
 DIR="${ACCOUNTS_DIR:-$HOME/.oci/accounts}"
 HERE="$(cd "$(dirname "$0")" && pwd)"
 export SSH_PUB="${SSH_PUB:-$DIR/ssh.pub}" LOG=/dev/null
 [ -f "$DIR/notify_url" ] && NOTIFY_URL="$(tr -d '[:space:]' < "$DIR/notify_url")" && export NOTIFY_URL
-notify() { [ -z "${NOTIFY_URL:-}" ] || curl -fsS -m 15 -H "Title: $1" -d "$2" "$NOTIFY_URL" >/dev/null 2>&1 || true; }
+[ -f "$DIR/notify_token" ] && NOTIFY_TOKEN="$(tr -d '[:space:]' < "$DIR/notify_token")" && export NOTIFY_TOKEN
+send() { curl -fsS -m 15 ${NOTIFY_TOKEN:+-H "Authorization: Bearer $NOTIFY_TOKEN"} -H "Title: $1" -d "$2" "$NOTIFY_URL" >/dev/null; }
+notify() { [ -z "${NOTIFY_URL:-}" ] || send "$@" 2>/dev/null || true; }
+
+if [ "${1:-}" = "--test" ]; then
+  [ -n "${NOTIFY_URL:-}" ] || { echo "notify_url tanimli degil: $DIR/notify_url"; exit 1; }
+  send "Oracle A1 test" "${2:-Bildirim kanali calisiyor ($(hostname))}" &&
+    echo "gonderildi: $NOTIFY_URL (token: $([ -n "${NOTIFY_TOKEN:-}" ] && echo var || echo yok))" || exit 1
+  exit 0
+fi
 
 if [ "${1:-}" = "--summary" ]; then
   msg=""
