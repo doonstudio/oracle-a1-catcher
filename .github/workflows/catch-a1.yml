@@ -1,0 +1,62 @@
+# 5 dakikada bir Oracle'a bakar; kapasite varsa A1 sunucusunu acar.
+# Sunucu hazir olunca bu is kendini kapatir (yeniden acmak: gh workflow enable catch-a1.yml).
+name: Oracle A1 yakala
+
+on:
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: write # is bitince workflow'u kapatmak icin
+
+concurrency:
+  group: catch-a1
+  cancel-in-progress: false
+
+jobs:
+  catch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - name: Sunucu yakala
+        id: catch
+        env:
+          OCI_USER_OCID: ${{ secrets.OCI_USER_OCID }}
+          OCI_TENANCY_OCID: ${{ secrets.OCI_TENANCY_OCID }}
+          OCI_FINGERPRINT: ${{ secrets.OCI_FINGERPRINT }}
+          OCI_REGION: ${{ secrets.OCI_REGION }}
+          OCI_PRIVATE_KEY: ${{ secrets.OCI_PRIVATE_KEY }}
+          SSH_PUBLIC_KEY: ${{ secrets.SSH_PUBLIC_KEY }}
+          NOTIFY_URL: ${{ secrets.NOTIFY_URL }}
+          SSH_PUB: ${{ runner.temp }}/a1.pub
+        run: |
+          if [ -z "$OCI_TENANCY_OCID" ] || [ -z "$OCI_PRIVATE_KEY" ] || [ -z "$SSH_PUBLIC_KEY" ]; then
+            echo "::warning::OCI secret'lari tanimli degil (bkz. README), atlaniyor"
+            exit 0
+          fi
+          pip install --quiet --disable-pip-version-check oci-cli
+
+          mkdir -p ~/.oci
+          printf '%s\n' "$OCI_PRIVATE_KEY" > ~/.oci/key.pem
+          printf '[DEFAULT]\nuser=%s\nfingerprint=%s\ntenancy=%s\nregion=%s\nkey_file=~/.oci/key.pem\n' \
+            "$OCI_USER_OCID" "$OCI_FINGERPRINT" "$OCI_TENANCY_OCID" "$OCI_REGION" > ~/.oci/config
+          chmod 600 ~/.oci/key.pem ~/.oci/config
+          printf '%s\n' "$SSH_PUBLIC_KEY" > "$SSH_PUB"
+
+          rc=0; ./catch-a1.sh --once || rc=$?
+          if [ "$rc" = 0 ]; then echo "ready=true" >> "$GITHUB_OUTPUT"; fi
+          [ "$rc" = 0 ] || [ "$rc" = 10 ] || exit "$rc"
+
+      - name: Sunucu hazir, zamanlamayi kapat
+        if: steps.catch.outputs.ready == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow disable catch-a1.yml --repo "$GITHUB_REPOSITORY"
