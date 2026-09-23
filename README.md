@@ -1,103 +1,153 @@
-# freqtrade-oracle-lab
+# oracle-a1-catcher
 
-Oracle Cloud'un **ucretsiz** ARM sunucularinda birden fazla [freqtrade](https://github.com/freqtrade/freqtrade)
-botunu ayni anda **dry-run** (sanal para) modunda calistirmak icin hazirlanmis
-betikler ve strateji dosyalari.
+Oracle Cloud **Always Free** ARM sunucusunu (VM.Standard.A1.Flex, **hesap başına 1 adet,
+2 OCPU / 12 GB**) kapasite açıldığı anda yakalar. Birden fazla Oracle hesabını destekler.
 
-Iki isi cozer:
+Popüler bölgelerde sunucu açmaya çalışınca Oracle neredeyse her seferinde
+**"Out of host capacity"** döner. Kapasite gün içinde kısa aralıklarla açılıp kapanır.
+Bu repo GitHub Actions üzerinde **5 dakikada bir** tanımlı her Oracle hesabına bakar,
+kapasite bulunca o hesapta sunucuyu açar. Tüm hesaplarda sunucu hazır olunca kendi
+zamanlamasını kapatır. Bilgisayarın açık kalması gerekmez.
 
-1. **Sunucu yakalama.** Oracle'in ucretsiz ARM sunuculari surekli "Out of host capacity"
-   verir. `oracle/catch-a1.sh` kapasite acilana kadar dener, acilinca durur.
-2. **Bot filosu.** Tek sunucuda 4-5 strateji, her biri kendi portu, kendi veritabani
-   ve kendi sanal cuzdaniyla calisir. Hepsini tek FreqUI'den izlersin.
+## Nasıl çalışır
 
-## Uyari: bu stratejiler kanitlanmis degil
+Her çalışmada, her hesap için [`catch-a1.sh`](catch-a1.sh) sırasıyla şunları yapar:
 
-`strategies/` altindaki 9 strateji 2024-09 ile 2026-09 arasi Binance verisiyle
-gelistirildi ve bagimsiz olarak denetlendi. **Hicbiri gercek parada kar garantisi vermez.**
-Denetim sonuclari ozetle:
-
-- Cogu, egitim doneminde pozitif gorunup gorulmemis veride negatife dondu.
-- Karin buyuk kismi genelde 2024 sonu yukselisinden geliyordu.
-- Komisyon %0.15'e cikinca bircogu zarara geciyordu.
-
-Bunlari **arastirma malzemesi** olarak kullan, hazir kazanc araci olarak degil.
-Kendi verinle yeniden backtest et, dry-run'da haftalarca izle, ancak ondan sonra
-gercek para dusun. Yatirim tavsiyesi degildir.
-
-## Onemli: Binance ABD sunucularini engelliyor
-
-Oracle'in ABD bolgelerindeki sunuculardan `api.binance.com` **HTTP 451** doner.
-Cozum olarak config, Binance'in halka acik veri ucnoktasina yonlendirilir:
-
-```json
-"ccxt_config": {
-  "options": { "fetchMarkets": ["spot"], "defaultType": "spot", "fetchCurrencies": false },
-  "urls": { "api": { "public":  "https://data-api.binance.vision/api/v3",
-                     "private": "https://data-api.binance.vision/api/v3" } }
-},
-"enable_ws": false
-```
-
-Bununla **dry-run ve backtest calisir**. Ama hesap dogrulamasi gerektiren
-**gercek islem bu sunuculardan yapilamaz.** Canlı bot ABD disinda bir makinede
-calismali.
+1. `a1-free` adında canlı bir sunucu varsa hiçbir şey yapmadan geçer.
+2. Hesaptaki tüm A1 sunucularının toplam OCPU ve RAM'ine bakar. Yeni sunucu ücretsiz
+   sınırı (2 OCPU / 12 GB) aşacaksa **istek göndermeden durur**, böylece ücret çıkmaz.
+3. Bölgedeki tüm availability domain'lerde sırayla sunucu açmayı dener.
+4. Açılınca bildirim gönderir (isteğe bağlı).
 
 ## Kurulum
 
-```bash
-git clone https://github.com/<kullanici>/freqtrade-oracle-lab.git
-cd freqtrade-oracle-lab
+Bilgisayarında sadece `gh` CLI yeterli, `oci` CLI kurmana gerek yok. 1-3. adımları
+**her Oracle hesabı için** tekrarla (hesap 1, 2, 3...).
 
-# 1) Sunucu yakala  (once oracle/README.md icindeki hazirligi yap)
-./oracle/catch-a1.sh 2 1 6
+### 1. API anahtarı oluştur
 
-# 2) Sunucuyu hazirla (docker + freqtrade imaji)
-./deploy/setup-server.sh <sunucu_ip>
+Oracle konsolunda sağ üstteki profil menüsünden **My profile → Tokens and keys → API keys →
+Add API key** yolunu izle. **Generate API key pair** seç, **Download private key** ile
+`.pem` dosyasını indir ve **Add**'e bas. Açılan **Configuration file preview** penceresindeki
+metnin tamamını kopyala (panoda kalsın).
 
-# 3) Botlari kur (her birine ayri port, ayri veritabani, ayri 1000 USDT sanal cuzdan)
-./deploy/deploy-bots.sh <sunucu_ip> TrendSlow4h SqueezeKeltner RelStrengthBtc RegimeDipBuyer TrendEmaMtf
+### 2. Hesabı ekle
 
-# 4) Arayuze baglan (hicbir port internete acilmaz)
-./deploy/tunnel.sh <sunucu_ip>
-```
-
-Sonra FreqUI'yi ac ve cikan `http://127.0.0.1:80xx` adreslerini bot olarak ekle.
-Varsayilan giris `freqtrader` / `freqtrader` (uretimde degistir: `UI_PASS=... ./deploy/deploy-bots.sh ...`).
-
-## Periyodik arastirma (istege bagli)
-
-`deploy/research.sh` sunucuda 4 saatte bir tum stratejileri son 180 gun icin
-backtest edip `user_data/research_results.csv` dosyasina yazar. Hem strateji
-takibi saglar hem sunucuyu "bos" olmaktan cikarir.
+Repo klasöründe:
 
 ```bash
-scp -i ~/.ssh/oracle_freqtrade deploy/research.sh ubuntu@<ip>:~/ft/
-ssh -i ~/.ssh/oracle_freqtrade ubuntu@<ip> \
-  '(crontab -l 2>/dev/null; echo "17 */4 * * * /home/ubuntu/ft/research.sh") | crontab -'
+./add-account.sh 1 ~/Downloads/<indirdigin>.pem
 ```
 
-## Guvenlik
+Komut panodaki config metnini ve `.pem` dosyasını `OCI_CONFIG_1` / `OCI_KEY_1` secret'ları
+olarak kaydeder. İlk seferde `~/.ssh/oracle_a1` SSH anahtarını da üretip açık anahtarını
+yükler; tüm sunucular bu anahtarla açılır. Sonraki hesaplar için `2`, `3` yaz. Config
+metnini panodan değil de dosyadan vermek istersen üçüncü argüman olarak dosya yolunu ekle.
 
-- Bot arayuzleri sadece `127.0.0.1` dinler, internete acilmaz. Erisim SSH tuneliyle.
-- Bu repoda **hicbir API anahtari yoktur** ve olmamalidir. `.gitignore` pem, key ve
-  `config-private.json` dosyalarini engeller.
-- Borsa anahtari kullanacaksan `dry_run` kapali bir config ile **sadece kendi makinende**
-  tut. Anahtarda "withdrawals" izni kapali olsun, IP kisitlamasi ekle.
+### 3. Ağ (VCN) oluştur
 
-## Dizin yapisi
+**Networking → Virtual Cloud Networks → Actions → Start VCN Wizard →
+"Create VCN with Internet Connectivity"**. Varsayılanlarla oluştur. Betik adında
+`public` geçen subnet'i kendisi bulur.
 
+### 4. Anahtarları sakla
+
+GitHub secret'ları yalnızca yazılabilir, sonradan okunamaz. Okunabilir tek kopya senin
+saklayacağın yer olur. Bitwarden'da:
+
+- Her hesap için bir **Secure Note** aç, örneğin "Oracle A1 – hesap 1 (e-posta)". İçine
+  Configuration file preview metnini ve `.pem` dosyasının tüm içeriğini yapıştır.
+- `~/.ssh/oracle_a1` SSH anahtarını bir **SSH key** öğesi olarak ekle. Tüm sunuculara
+  bununla bağlanırsın.
+- Sonra `~/Downloads` içindeki `.pem` dosyalarını sil.
+
+Bir anahtar kaybolursa sorun olmaz. Konsoldan eskisini silip yeni API key oluştur ve
+`./add-account.sh <no> <yeni.pem>` ile üzerine yaz.
+
+### 5. Bildirim (isteğe bağlı)
+
+[ntfy](https://ntfy.sh) ile sunucu açılınca telefona bildirim gelir. Tahmin edilmesi zor bir
+konu adı seç, telefondaki ntfy uygulamasında o konuya abone ol:
+
+```bash
+gh secret set NOTIFY_URL -R doonstudio/oracle-a1-catcher --body "https://ntfy.sh/<rastgele-konu-adi>"
 ```
-oracle/catch-a1.sh        ucretsiz ARM sunucu yakalama dongusu
-oracle/README.md          oci CLI kurulumu ve Oracle notlari
-deploy/setup-server.sh    sunucuya docker + freqtrade imaji
-deploy/deploy-bots.sh     N adet dry-run botu kur
-deploy/tunnel.sh          arayuzler icin SSH tuneli
-deploy/research.sh        periyodik backtest isi
-config/config.template.json  anahtarsiz ornek config
-strategies/*.py           9 arastirma stratejisi
+
+### 6. Dene
+
+```bash
+gh workflow run catch-a1.yml -R doonstudio/oracle-a1-catcher
+gh run watch -R doonstudio/oracle-a1-catcher
 ```
+
+Logda her hesap ayrı bir grup olarak görünür. "kapasite yok" satırları normal, iş 5
+dakikada bir kendiliğinden tekrar dener. Sunucu açılınca IP adresini o hesabın Oracle
+konsolunda (Compute → Instances) ya da ntfy bildiriminde görürsün:
+
+```bash
+ssh -i ~/.ssh/oracle_a1 ubuntu@<ip>
+```
+
+Yeni hesap ekler ya da bir sunucuyu silip yenisini yakalatmak istersen zamanlamayı tekrar aç:
+
+```bash
+gh workflow enable catch-a1.yml -R doonstudio/oracle-a1-catcher
+```
+
+## Bilgisayarda çalıştırma (isteğe bağlı)
+
+`oci` CLI kurulu ve `~/.oci/config` hazırsa aynı betik yerelde de çalışır. Birden fazla
+hesap için config dosyasında her hesaba bir profil aç (`[HESAP1]`, `[HESAP2]`...):
+
+```bash
+brew install oci-cli
+./catch-a1.sh                            # varsayilan profil, kapasite acilana kadar 2 dakikada bir dener
+OCI_CLI_PROFILE=HESAP2 ./catch-a1.sh     # baska hesap
+./catch-a1.sh --once                     # tek tur dener ve cikar
+```
+
+## Ayarlar
+
+Hepsi ortam değişkeniyle değiştirilebilir. Varsayılanlar tek bir 2 OCPU / 12 GB sunucu içindir.
+
+| Değişken | Varsayılan | Açıklama |
+|---|---|---|
+| `INSTANCE_NAME` | `a1-free` | Sunucu adı. Bu adla canlı sunucu varsa betik bir şey yapmaz |
+| `OCPU` / `MEMORY_GB` | `2` / `12` | Açılacak sunucunun boyutu |
+| `FREE_OCPU` / `FREE_MEM` | `2` / `12` | Hesabın ücretsiz A1 sınırı. Toplam kullanım bunu aşacaksa istek gönderilmez |
+| `BOOT_GB` | boş (~47 GB) | Disk boyutu. Ücretsiz blok depolama toplamı 200 GB |
+| `SSH_PUB` | `~/.ssh/oracle_a1.pub` | Sunucuya yüklenecek SSH açık anahtarı |
+| `OCI_CLI_CONFIG_FILE` / `OCI_CLI_PROFILE` | `~/.oci/config` / `DEFAULT` | Hangi hesabın kullanılacağı |
+| `SUBNET_ID` / `IMAGE_ID` | otomatik | Adında `public` geçen subnet ve en yeni Ubuntu 24.04 ARM imajı |
+| `NOTIFY_URL` | boş | Sunucu açılınca buraya POST atılır (ntfy uyumlu) |
+| `SLEEP_AD` / `SLEEP_ROUND` | `15` / `120` | AD'ler ve turlar arası bekleme (sn) |
+
+Çıkış kodları: `0` sunucu hazır, `10` bu turda kapasite yok, `1` yapılandırma ya da API
+hatası, `3` ücretsiz kota aşılacaktı.
+
+## Bilinmesi gerekenler
+
+- **Kişi başına tek ücretsiz hesap.** Oracle [Free Tier SSS](https://www.oracle.com/cloud/free/faq/)
+  kişi başına bir Always Free hesabına izin veriyor, birden fazla ücretsiz hesap açmayı
+  yasaklıyor ve kurala uymayan hesapları askıya alabiliyor ya da kapatabiliyor. Buraya
+  eklenen her hesap ayrı bir kişiye ya da şirkete ait olmalı ve sahibinin onayıyla kullanılmalı.
+- **Actions logları herkese açık** (repo public). Betik OCID'leri maskeler ve IP adresini
+  loga yazmaz. IP'yi konsoldan ya da bildirimden al.
+- **Boşta kalan sunucu geri alınır.** 7 gün boyunca CPU, ağ ve bellek kullanımı aynı anda
+  %20'nin altında kalırsa Oracle sunucuyu durdurabilir. Sunucuda sürekli çalışan bir iş olsun.
+- **Ana bölge değiştirilemez.** Ücretsiz hesap tek bölgeye abonedir; sunucu o bölgede açılır.
+- **Zamanlama 60 gün sonra durabilir.** GitHub, 60 gün commit görmeyen public repolardaki
+  zamanlanmış işleri kapatır. Öyle olursa `gh workflow enable` ile tekrar aç.
+- **Kapasite sabır ister.** Chicago'da ~1000 denemeden sonra açıldığı oldu. Hesabı
+  Pay As You Go'ya yükseltenlerin kapasiteyi daha kolay bulduğu sıkça bildiriliyor. Ücretsiz
+  sınırın içinde kalındığı sürece ücret çıkmaz; betikteki kota kontrolü bu yüzden var.
+- **Kapasiteyi denemeden sorgulamak** için:
+  ```bash
+  oci compute compute-capacity-report create --compartment-id <tenancy> \
+    --availability-domain <AD> \
+    --shape-availabilities '[{"instanceShape":"VM.Standard.A1.Flex","instanceShapeConfig":{"ocpus":2,"memoryInGBs":12}}]'
+  ```
 
 ## Lisans
 
-MIT. Kendi riskinle kullan.
+MIT.
