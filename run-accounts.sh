@@ -5,6 +5,7 @@
 # Hesap basina bir klasor ($ACCOUNTS_DIR, varsayilan ~/.oci/accounts):
 #   <ad>/config    Oracle'in "Configuration file preview" metni, key_file=<ad>/key.pem
 #   <ad>/key.pem   API private key
+#   <ad>/env       (istege bagli) bu hesaba ozel ayarlar, orn. SUBNET_ID=... INSTANCE_NAME=...
 # Ortak (istege bagli):
 #   ssh.pub        yeni sunuculara yuklenecek SSH acik anahtari
 #   notify_url     ntfy adresi, orn. https://ntfy.sh/<rastgele-konu>
@@ -37,7 +38,7 @@ if command -v flock >/dev/null; then exec 9>"${TMPDIR:-/tmp}/oracle-a1.lock"; fl
 for cfg in "$DIR"/*/config; do
   [ -f "$cfg" ] || continue
   d=$(dirname "$cfg"); name=$(basename "$d")
-  out=$(OCI_CLI_CONFIG_FILE="$cfg" "$HERE/catch-a1.sh" --once 2>&1); rc=$?
+  out=$(set -a; [ -f "$d/env" ] && . "$d/env"; OCI_CLI_CONFIG_FILE="$cfg" "$HERE/catch-a1.sh" --once 2>&1); rc=$?
   printf '%s\n' "$out" | sed "s/^/[$name] /"
   printf '%s\n' "$out" | grep . | tail -1 > "$d/last"
 

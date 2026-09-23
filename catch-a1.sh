@@ -112,14 +112,21 @@ ADS=$(oci iam availability-domain list -c "$T" --query 'data[].name' --raw-outpu
 ADS=$(printf '%s\n' "$ADS" | tr -d '[]," ' | grep -v '^$')
 [ -n "$ADS" ] || die 1 "availability domain listesi bos"
 
-SUB="${SUBNET_ID:-$(oci network subnet list -c "$T" --all --query "data[?contains(\"display-name\",'public')].id | [0]" --raw-output 2>/dev/null)}"
+# Public IP verilebilen subnet: once bolgesel ve adinda "public" gecen, sonra herhangi bolgesel, en son AD'ye bagli
+PUB='!"prohibit-public-ip-on-vnic"'
+SUB="${SUBNET_ID:-$(oci network subnet list -c "$T" --all --raw-output --query \
+  "(data[?$PUB && !\"availability-domain\" && contains(\"display-name\",'public')].id | [0]) || (data[?$PUB && !\"availability-domain\"].id | [0]) || (data[?$PUB].id | [0])" 2>/dev/null)}"
 [ -n "$SUB" ] && [ "$SUB" != null ] || die 1 "public subnet yok. Konsolda 'Start VCN Wizard' ile internet erisimli VCN olustur"
+SUB_INFO=$(oci network subnet get --subnet-id "$SUB" --raw-output \
+  --query "join('|', [data.\"display-name\", data.\"availability-domain\" || ''])" 2>/dev/null)
+SUB_AD="${SUB_INFO#*|}"
+[ -n "$SUB_AD" ] && ADS="$SUB_AD"   # AD'ye bagli subnet sadece kendi AD'sinde kullanilabilir
 
 IMG="${IMAGE_ID:-$(oci compute image list -c "$T" --operating-system 'Canonical Ubuntu' --operating-system-version '24.04' \
   --shape "$SHAPE" --sort-by TIMECREATED --sort-order DESC --query 'data[0].id' --raw-output 2>/dev/null)}"
 [ -n "$IMG" ] && [ "$IMG" != null ] || die 1 "Ubuntu 24.04 ARM imaji bulunamadi"
 
-log "Hedef: $NAME, $OCPU OCPU / $MEM GB, AD: $(echo $ADS | wc -w | tr -d ' ') adet"
+log "Hedef: $NAME, $OCPU OCPU / $MEM GB, subnet: ${SUB_INFO%%|*}, AD: $(echo $ADS | wc -w | tr -d ' ') adet"
 while :; do
   round && exit 0
   [ "$ONCE" = 1 ] && exit 10
