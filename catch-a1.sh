@@ -33,7 +33,7 @@ ALIVE="shape=='$SHAPE' && \"lifecycle-state\"!='TERMINATED' && \"lifecycle-state
 # Actions loglari herkese acik: OCID'ler maskelenir, IP sadece yerelde yazilir.
 log() { echo "$(date '+%F %T') $*" | sed -E 's/ocid1\.[a-z0-9._-]+/ocid1.***/g' | tee -a "$LOG"; }
 die() { log "HATA: $2"; exit "$1"; }
-notify() { [ -z "${NOTIFY_URL:-}" ] || curl -fsS -m 15 -d "$1" "$NOTIFY_URL" >/dev/null 2>&1 || true; }
+notify() { [ -z "${NOTIFY_URL:-}" ] || curl -fsS -m 15 -H "Title: $1" -H "Priority: high" -d "$2" "$NOTIFY_URL" >/dev/null 2>&1 || true; }
 # OCI hata ciktisini tek satira indirir: "code: message"
 why() {
   local c m
@@ -75,8 +75,10 @@ created() {
     [ -n "$ip" ] && [ "$ip" != null ] && break
     ip=""; sleep 10
   done
-  [ -z "${GITHUB_ACTIONS:-}" ] && [ -n "$ip" ] && echo "Baglan: ssh -i ${SSH_PUB%.pub} ubuntu@$ip"
-  notify "Oracle A1 sunucusu acildi: $NAME ($OCPU OCPU / $MEM GB) ${ip:-IP henuz atanmadi, konsola bak}"
+  if [ -z "${GITHUB_ACTIONS:-}" ] && [ -n "$ip" ]; then
+    if [ -f "${SSH_PUB%.pub}" ]; then echo "Baglan: ssh -i ${SSH_PUB%.pub} ubuntu@$ip"; else echo "Baglan: ssh ubuntu@$ip"; fi
+  fi
+  notify "Oracle A1 sunucusu acildi" "$NAME ($OCPU OCPU / $MEM GB) ${ip:-IP henuz atanmadi, konsola bak}"
 }
 
 # Tek tur. 0 = sunucu hazir, 10 = kapasite yok / gecici hata
