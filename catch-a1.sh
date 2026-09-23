@@ -33,7 +33,7 @@ ALIVE="shape=='$SHAPE' && \"lifecycle-state\"!='TERMINATED' && \"lifecycle-state
 # Actions loglari herkese acik: OCID'ler maskelenir, IP sadece yerelde yazilir.
 log() { echo "$(date '+%F %T') $*" | sed -E 's/ocid1\.[a-z0-9._-]+/ocid1.***/g' | tee -a "$LOG"; }
 die() { log "HATA: $2"; exit "$1"; }
-notify() { [ -z "${NOTIFY_URL:-}" ] || curl -fsS -m 15 -d "$1" "$NOTIFY_URL" >/dev/null 2>&1 || true; }
+notify() { [ -z "${NOTIFY_URL:-}" ] || curl -fsS -m 15 -H "Title: $1" -H "Priority: high" -d "$2" "$NOTIFY_URL" >/dev/null 2>&1 || true; }
 # OCI hata ciktisini tek satira indirir: "code: message"
 why() {
   local c m
@@ -58,8 +58,9 @@ a1_state() {
 }
 
 launch() {
+  # --no-retry: CLI "Out of host capacity" (500) hatasini ~2 dk tekrar deniyor; tur uzamasin
   # shellcheck disable=SC2086
-  oci compute instance launch -c "$T" --availability-domain "$1" \
+  oci --no-retry compute instance launch -c "$T" --availability-domain "$1" \
     --shape "$SHAPE" --shape-config "{\"ocpus\":$OCPU,\"memoryInGBs\":$MEM}" \
     --image-id "$IMG" --subnet-id "$SUB" --assign-public-ip true \
     --display-name "$NAME" --ssh-authorized-keys-file "$SSH_PUB" \
@@ -75,8 +76,10 @@ created() {
     [ -n "$ip" ] && [ "$ip" != null ] && break
     ip=""; sleep 10
   done
-  [ -z "${GITHUB_ACTIONS:-}" ] && [ -n "$ip" ] && echo "Baglan: ssh -i ${SSH_PUB%.pub} ubuntu@$ip"
-  notify "Oracle A1 sunucusu acildi: $NAME ($OCPU OCPU / $MEM GB) ${ip:-IP henuz atanmadi, konsola bak}"
+  if [ -z "${GITHUB_ACTIONS:-}" ] && [ -n "$ip" ]; then
+    if [ -f "${SSH_PUB%.pub}" ]; then echo "Baglan: ssh -i ${SSH_PUB%.pub} ubuntu@$ip"; else echo "Baglan: ssh ubuntu@$ip"; fi
+  fi
+  notify "Oracle A1 sunucusu acildi" "$NAME ($OCPU OCPU / $MEM GB) ${ip:-IP henuz atanmadi, konsola bak}"
 }
 
 # Tek tur. 0 = sunucu hazir, 10 = kapasite yok / gecici hata
@@ -110,14 +113,21 @@ ADS=$(oci iam availability-domain list -c "$T" --query 'data[].name' --raw-outpu
 ADS=$(printf '%s\n' "$ADS" | tr -d '[]," ' | grep -v '^$')
 [ -n "$ADS" ] || die 1 "availability domain listesi bos"
 
-SUB="${SUBNET_ID:-$(oci network subnet list -c "$T" --all --query "data[?contains(\"display-name\",'public')].id | [0]" --raw-output 2>/dev/null)}"
+# Public IP verilebilen subnet: once bolgesel ve adinda "public" gecen, sonra herhangi bolgesel, en son AD'ye bagli
+PUB='!"prohibit-public-ip-on-vnic"'
+SUB="${SUBNET_ID:-$(oci network subnet list -c "$T" --all --raw-output --query \
+  "(data[?$PUB && !\"availability-domain\" && contains(\"display-name\",'public')].id | [0]) || (data[?$PUB && !\"availability-domain\"].id | [0]) || (data[?$PUB].id | [0])" 2>/dev/null)}"
 [ -n "$SUB" ] && [ "$SUB" != null ] || die 1 "public subnet yok. Konsolda 'Start VCN Wizard' ile internet erisimli VCN olustur"
+SUB_INFO=$(oci network subnet get --subnet-id "$SUB" --raw-output \
+  --query "join('|', [data.\"display-name\", data.\"availability-domain\" || ''])" 2>/dev/null)
+SUB_AD="${SUB_INFO#*|}"
+[ -n "$SUB_AD" ] && ADS="$SUB_AD"   # AD'ye bagli subnet sadece kendi AD'sinde kullanilabilir
 
 IMG="${IMAGE_ID:-$(oci compute image list -c "$T" --operating-system 'Canonical Ubuntu' --operating-system-version '24.04' \
   --shape "$SHAPE" --sort-by TIMECREATED --sort-order DESC --query 'data[0].id' --raw-output 2>/dev/null)}"
 [ -n "$IMG" ] && [ "$IMG" != null ] || die 1 "Ubuntu 24.04 ARM imaji bulunamadi"
 
-log "Hedef: $NAME, $OCPU OCPU / $MEM GB, AD: $(echo $ADS | wc -w | tr -d ' ') adet"
+log "Hedef: $NAME, $OCPU OCPU / $MEM GB, subnet: ${SUB_INFO%%|*}, AD: $(echo $ADS | wc -w | tr -d ' ') adet"
 while :; do
   round && exit 0
   [ "$ONCE" = 1 ] && exit 10

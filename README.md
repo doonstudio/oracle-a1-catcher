@@ -5,9 +5,12 @@ Oracle Cloud **Always Free** ARM sunucusunu (VM.Standard.A1.Flex, **hesap başı
 
 Popüler bölgelerde sunucu açmaya çalışınca Oracle neredeyse her seferinde
 **"Out of host capacity"** döner. Kapasite gün içinde kısa aralıklarla açılıp kapanır.
-Bu repo GitHub Actions üzerinde **5 dakikada bir** tanımlı her Oracle hesabına bakar,
-kapasite bulunca o hesapta sunucuyu açar. Tüm hesaplarda sunucu hazır olunca kendi
-zamanlamasını kapatır. Bilgisayarın açık kalması gerekmez.
+Bu repo **5 dakikada bir** tanımlı her Oracle hesabına bakar ve kapasite bulunca o hesapta
+sunucuyu açar. İki şekilde çalıştırılabilir:
+
+- **Kendi sunucunda cron ile** (bu kurulumda kullanılan): anahtarlar sadece o sunucuda durur.
+  Oracle'ın ücretsiz micro sunucusu bunun için yeterli.
+- **GitHub Actions ile**: sunucu gerekmez ama anahtarlar GitHub secret'ı olarak saklanır.
 
 ## Nasıl çalışır
 
@@ -19,9 +22,54 @@ Her çalışmada, her hesap için [`catch-a1.sh`](catch-a1.sh) sırasıyla şunl
 3. Bölgedeki tüm availability domain'lerde sırayla sunucu açmayı dener.
 4. Açılınca bildirim gönderir (isteğe bağlı).
 
-## Kurulum
+## Kendi sunucunda cron ile
 
-Bilgisayarında sadece `gh` CLI yeterli, `oci` CLI kurmana gerek yok. 1-3. adımları
+Herhangi bir Linux sunucuda çalışır (ör. Oracle'ın ücretsiz `VM.Standard.E2.1.Micro` sunucusu).
+Her Oracle hesabı için API anahtarı ve VCN adımları aşağıdaki GitHub kurulumundakiyle aynı
+(1. ve 3. adım); secret yerine dosyalar sunucuya kopyalanır.
+
+```bash
+# sunucuda
+sudo apt-get install -y python3-venv git
+python3 -m venv ~/oci-venv && ~/oci-venv/bin/pip install oci-cli
+git clone https://github.com/doonstudio/oracle-a1-catcher.git ~/oracle-a1-catcher
+```
+
+Hesaplar `~/.oci/accounts` altında, her biri kendi klasöründe durur (klasörler `700`,
+dosyalar `600`):
+
+```
+~/.oci/accounts/
+  <hesap-adi>/config    Configuration file preview metni; key_file bu klasördeki key.pem'i gösterir
+  <hesap-adi>/key.pem   API private key
+  ssh.pub               yeni sunuculara yüklenecek SSH açık anahtarı
+  notify_url            ntfy adresi (isteğe bağlı), ör. https://ntfy.sh/<rastgele-konu>
+```
+
+`crontab -e`:
+
+```
+PATH=/home/ubuntu/oci-venv/bin:/usr/bin:/bin
+*/5 * * * * $HOME/oracle-a1-catcher/run-accounts.sh >> $HOME/oracle-a1.log 2>&1
+0 7 * * * $HOME/oracle-a1-catcher/run-accounts.sh --summary
+30 7 * * * tail -n 5000 $HOME/oracle-a1.log > $HOME/oracle-a1.log.tmp && mv $HOME/oracle-a1.log.tmp $HOME/oracle-a1.log
+```
+
+[`run-accounts.sh`](run-accounts.sh) her hesabı sırayla dener ve [ntfy](https://ntfy.sh) ile
+bildirim gönderir:
+
+- **Sunucu açılınca** IP adresiyle birlikte (yüksek öncelik).
+- **Bir hesap hata verince** (ağ yok, anahtar geçersiz, kota dolu) bir kez; düzelince yine bir kez.
+- **Her sabah** her hesabın son durumu, işin hâlâ çalıştığını görmek için.
+
+Telefona ntfy uygulamasını kur ve `notify_url` içindeki konuya abone ol. Loglar:
+`tail -f ~/oracle-a1.log`.
+
+## GitHub Actions ile
+
+Bu repoda workflow kapalı (`disabled_manually`); kullanmak için
+`gh workflow enable catch-a1.yml`. Bilgisayarında sadece `gh` CLI yeterli, `oci` CLI kurmana
+gerek yok. 1-3. adımları
 **her Oracle hesabı için** tekrarla (hesap 1, 2, 3...).
 
 ### 1. API anahtarı oluştur
