@@ -1,5 +1,6 @@
-# 5 dakikada bir Oracle'a bakar; kapasite varsa A1 sunucusunu acar.
-# Sunucu hazir olunca bu is kendini kapatir (yeniden acmak: gh workflow enable catch-a1.yml).
+# 5 dakikada bir tanimli her Oracle hesabina bakar; kapasite varsa A1 sunucusunu acar.
+# Hesaplar OCI_CONFIG_<n> + OCI_KEY_<n> secret ciftleriyle eklenir (bkz. add-account.sh).
+# Tum hesaplarda sunucu hazir olunca is kendini kapatir (yeniden: gh workflow enable catch-a1.yml).
 name: Oracle A1 yakala
 
 on:
@@ -18,7 +19,7 @@ concurrency:
 jobs:
   catch:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
 
@@ -29,33 +30,45 @@ jobs:
       - name: Sunucu yakala
         id: catch
         env:
-          OCI_USER_OCID: ${{ secrets.OCI_USER_OCID }}
-          OCI_TENANCY_OCID: ${{ secrets.OCI_TENANCY_OCID }}
-          OCI_FINGERPRINT: ${{ secrets.OCI_FINGERPRINT }}
-          OCI_REGION: ${{ secrets.OCI_REGION }}
-          OCI_PRIVATE_KEY: ${{ secrets.OCI_PRIVATE_KEY }}
-          SSH_PUBLIC_KEY: ${{ secrets.SSH_PUBLIC_KEY }}
+          SECRETS: ${{ toJSON(secrets) }}
           NOTIFY_URL: ${{ secrets.NOTIFY_URL }}
           SSH_PUB: ${{ runner.temp }}/a1.pub
         run: |
-          if [ -z "$OCI_TENANCY_OCID" ] || [ -z "$OCI_PRIVATE_KEY" ] || [ -z "$SSH_PUBLIC_KEY" ]; then
-            echo "::warning::OCI secret'lari tanimli degil (bkz. README), atlaniyor"
+          sec() { jq -r --arg k "$1" '.[$k] // empty' <<<"$SECRETS"; }
+          ACCOUNTS=$(jq -r 'keys[] | select(test("^OCI_CONFIG_[0-9]+$")) | ltrimstr("OCI_CONFIG_")' <<<"$SECRETS" | sort -n)
+          if [ -z "$ACCOUNTS" ] || [ -z "$(sec SSH_PUBLIC_KEY)" ]; then
+            echo "::warning::Hesap ya da SSH_PUBLIC_KEY secret'i tanimli degil (bkz. README), atlaniyor"
             exit 0
           fi
           pip install --quiet --disable-pip-version-check oci-cli
+          sec SSH_PUBLIC_KEY > "$SSH_PUB"
 
-          mkdir -p ~/.oci
-          printf '%s\n' "$OCI_PRIVATE_KEY" > ~/.oci/key.pem
-          printf '[DEFAULT]\nuser=%s\nfingerprint=%s\ntenancy=%s\nregion=%s\nkey_file=~/.oci/key.pem\n' \
-            "$OCI_USER_OCID" "$OCI_FINGERPRINT" "$OCI_TENANCY_OCID" "$OCI_REGION" > ~/.oci/config
-          chmod 600 ~/.oci/key.pem ~/.oci/config
-          printf '%s\n' "$SSH_PUBLIC_KEY" > "$SSH_PUB"
+          all_ready=1; failed=0
+          for n in $ACCOUNTS; do
+            dir="$RUNNER_TEMP/hesap-$n"; mkdir -p "$dir"
+            if [ -z "$(sec "OCI_KEY_$n")" ]; then
+              echo "::error::Hesap $n: OCI_KEY_$n secret'i yok"; all_ready=0; failed=1; continue
+            fi
+            sec "OCI_KEY_$n" > "$dir/key.pem"
+            # Oracle'in "Configuration file preview" metni; key_file satiri bizimkiyle degisir
+            cfg=$(sec "OCI_CONFIG_$n" | tr -d '\r' | grep -v '^[[:space:]]*key_file')
+            grep -q '^[[:space:]]*\[' <<<"$cfg" || cfg=$(printf '[DEFAULT]\n%s' "$cfg")
+            printf '%s\nkey_file=%s\n' "$cfg" "$dir/key.pem" > "$dir/config"
+            chmod 600 "$dir/key.pem" "$dir/config"
 
-          rc=0; ./catch-a1.sh --once || rc=$?
-          if [ "$rc" = 0 ]; then echo "ready=true" >> "$GITHUB_OUTPUT"; fi
-          [ "$rc" = 0 ] || [ "$rc" = 10 ] || exit "$rc"
+            echo "::group::Hesap $n"
+            rc=0; OCI_CLI_CONFIG_FILE="$dir/config" ./catch-a1.sh --once || rc=$?
+            echo "::endgroup::"
+            case "$rc" in
+              0) echo "Hesap $n: sunucu hazir" ;;
+              10) echo "Hesap $n: henuz kapasite yok"; all_ready=0 ;;
+              *) echo "::error::Hesap $n: cikis kodu $rc, grubun icindeki HATA satirina bak"; all_ready=0; failed=1 ;;
+            esac
+          done
+          if [ "$all_ready" = 1 ]; then echo "ready=true" >> "$GITHUB_OUTPUT"; fi
+          exit "$failed"
 
-      - name: Sunucu hazir, zamanlamayi kapat
+      - name: Tum hesaplarda sunucu hazir, zamanlamayi kapat
         if: steps.catch.outputs.ready == 'true'
         env:
           GH_TOKEN: ${{ github.token }}

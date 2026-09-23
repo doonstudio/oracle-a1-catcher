@@ -8,11 +8,12 @@
 # Kullanim:
 #   ./catch-a1.sh          kapasite acilana kadar dongude dener (bilgisayarda)
 #   ./catch-a1.sh --once   tek tur dener ve cikar (GitHub Actions / cron)
+# Birden fazla hesap: OCI_CLI_CONFIG_FILE ve/veya OCI_CLI_PROFILE ile hesap sec.
 # Cikis: 0 = sunucu hazir (zaten vardi ya da olusturuldu)
 #       10 = bu turda kapasite yok, sonra tekrar dene
 #        1 = yapilandirma / API hatasi    3 = ucretsiz kota asilacakti
 set -u
-export OCI_CLI_SUPPRESS_FILE_PERMISSIONS_WARNING=True PYTHONWARNINGS=ignore
+export OCI_CLI_SUPPRESS_FILE_PERMISSIONS_WARNING=True SUPPRESS_LABEL_WARNING=True PYTHONWARNINGS=ignore
 
 ONCE=0; [ "${1:-}" = "--once" ] && ONCE=1
 
@@ -44,8 +45,10 @@ field() { printf '%s\n' "$1" | sed -n "s/.*\"$2\": \([0-9.]*\).*/\1/p" | head -1
 
 command -v oci >/dev/null || die 1 "oci CLI yok (macOS: brew install oci-cli)"
 [ -f "$SSH_PUB" ] || die 1 "SSH acik anahtari yok: $SSH_PUB (uret: ssh-keygen -t ed25519 -f ${SSH_PUB%.pub} -N '')"
-T="${TENANCY:-$(sed -n 's/^[[:space:]]*tenancy[[:space:]]*=//p' "$HOME/.oci/config" 2>/dev/null | head -1 | tr -d '[:space:]')}"
-[ -n "$T" ] || die 1 "~/.oci/config icinde tenancy yok"
+CFG="${OCI_CLI_CONFIG_FILE:-$HOME/.oci/config}"
+T="${TENANCY:-$(awk -v p="[${OCI_CLI_PROFILE:-DEFAULT}]" '/^[[:space:]]*\[/ { gsub(/[[:space:]]/, ""); s = ($0 == p); next }
+  s && /^[[:space:]]*tenancy[[:space:]]*=/ { sub(/^[^=]*=/, ""); gsub(/[[:space:]]/, ""); print; exit }' "$CFG" 2>/dev/null)}"
+[ -n "$T" ] || die 1 "$CFG icinde [${OCI_CLI_PROFILE:-DEFAULT}] profili ya da tenancy satiri yok"
 ERR=$(mktemp); trap 'rm -f "$ERR"' EXIT
 
 # Hesaptaki canli A1 sunuculari: bizimki var mi, toplam ne kadar kullaniliyor
