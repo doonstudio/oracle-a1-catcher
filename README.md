@@ -41,7 +41,8 @@ Repo klasöründe:
 
 Komut panodaki config metnini ve `.pem` dosyasını `OCI_CONFIG_1` / `OCI_KEY_1` secret'ları
 olarak kaydeder. İlk seferde `~/.ssh/oracle_a1` SSH anahtarını da üretip açık anahtarını
-yükler; tüm sunucular bu anahtarla açılır. Sonraki hesaplar için `2`, `3` yaz. Config
+yükler; tüm sunucular bu anahtarla açılır. Sonraki hesaplar için `2`, `3` yaz (workflow 3
+hesaba kadar hazır; 4. hesap için `catch-a1.yml` env'ine iki satır eklemek yeterli). Config
 metnini panodan değil de dosyadan vermek istersen üçüncü argüman olarak dosya yolunu ekle.
 
 ### 3. Ağ (VCN) oluştur
