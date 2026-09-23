@@ -58,8 +58,9 @@ a1_state() {
 }
 
 launch() {
+  # --no-retry: CLI "Out of host capacity" (500) hatasini ~2 dk tekrar deniyor; tur uzamasin
   # shellcheck disable=SC2086
-  oci compute instance launch -c "$T" --availability-domain "$1" \
+  oci --no-retry compute instance launch -c "$T" --availability-domain "$1" \
     --shape "$SHAPE" --shape-config "{\"ocpus\":$OCPU,\"memoryInGBs\":$MEM}" \
     --image-id "$IMG" --subnet-id "$SUB" --assign-public-ip true \
     --display-name "$NAME" --ssh-authorized-keys-file "$SSH_PUB" \
