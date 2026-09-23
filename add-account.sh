@@ -31,6 +31,9 @@ fi
 printf '%s\n' "$CFG" | gh secret set "OCI_CONFIG_$N" -R "$REPO"
 gh secret set "OCI_KEY_$N" -R "$REPO" < "$PEM"
 echo "Hesap $N eklendi (bolge: $REGION): OCI_CONFIG_$N, OCI_KEY_$N"
+WF="$(dirname "$0")/.github/workflows/catch-a1.yml"
+grep -q "OCI_CONFIG_$N:" "$WF" 2>/dev/null ||
+  echo "UYARI: workflow henuz $N. hesabi okumuyor. $WF icindeki env'e OCI_CONFIG_$N ve OCI_KEY_$N satirlarini ekle."
 
 # Tum hesaplar ayni SSH anahtarini kullanir; ilk seferde yuklenir
 if ! gh secret list -R "$REPO" | grep -q "^SSH_PUBLIC_KEY[[:space:]]"; then
