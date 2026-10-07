@@ -54,7 +54,8 @@ for cfg in "$DIR"/*/config; do
   printf '%s\n' "$out" | grep . | tail -1 > "$d/last"
 
   # Hata bir kez bildirilir; duzelince de bir kez haber verilir.
-  # Sunucu acildiginda bildirimi catch-a1.sh kendisi (IP ile) gonderir.
+  # Sunucu acildiginda ve buyutme basladiginda bildirimi catch-a1.sh kendisi gonderir;
+  # buyutme bitince ("deneniyor" -> "hazir", sunucu zaten var) burada haber verilir.
   case $rc in 0) st=hazir ;; 10) st=deneniyor ;; *) st=hata ;; esac
   prev=$(cat "$d/state" 2>/dev/null || echo yeni)
   if [ "$st" != "$prev" ]; then
@@ -62,6 +63,8 @@ for cfg in "$DIR"/*/config; do
       notify "Oracle A1: $name HATA" "$(printf '%s\n' "$out" | grep HATA | tail -1)"
     elif [ "$prev" = hata ]; then
       notify "Oracle A1: $name duzeldi" "Durum: $st"
+    elif [ "$prev" = deneniyor ] && [ "$st" = hazir ] && printf '%s\n' "$out" | grep -q "zaten var"; then
+      notify "Oracle A1: $name buyutuldu" "Sunucu artik tam boyutta."
     fi
     echo "$st" > "$d/state"
   fi

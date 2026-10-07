@@ -16,11 +16,16 @@ sunucuyu açar. İki şekilde çalıştırılabilir:
 
 Her çalışmada, her hesap için [`catch-a1.sh`](catch-a1.sh) sırasıyla şunları yapar:
 
-1. `a1-free` adında canlı bir sunucu varsa hiçbir şey yapmadan geçer.
+1. `a1-free` adında tam boyutlu (2 OCPU / 12 GB) bir sunucu varsa hiçbir şey yapmadan geçer.
 2. Hesaptaki tüm A1 sunucularının toplam OCPU ve RAM'ine bakar. Yeni sunucu ücretsiz
    sınırı (2 OCPU / 12 GB) aşacaksa **istek göndermeden durur**, böylece ücret çıkmaz.
-3. Bölgedeki tüm availability domain'lerde sırayla sunucu açmayı dener.
-4. Açılınca bildirim gönderir (isteğe bağlı).
+3. Bölgedeki tüm availability domain'lerde önce 2 OCPU / 12 GB, hiçbirinde yer yoksa
+   1 OCPU / 6 GB açmayı dener. Küçük boşluklar büyüklerden daha sık açılır.
+4. Küçük sunucu açıldıysa sonraki her turda, sunucunun bulunduğu AD ve fault domain için
+   Oracle'ın kapasite raporuna bakar. 2 OCPU / 12 GB için yer görünce sunucuyu **yerinde
+   büyütür**; Oracle bunu yaparken sunucuyu bir kez yeniden başlatır. Rapor yer göstermedikçe
+   büyütme isteği gönderilmez, böylece boşuna yeniden başlatma olmaz.
+5. Sunucu açılınca, büyütme başlayınca ve bitince bildirim gönderir (isteğe bağlı).
 
 ## Kendi sunucunda cron ile
 
@@ -162,7 +167,8 @@ Hepsi ortam değişkeniyle değiştirilebilir. Varsayılanlar tek bir 2 OCPU / 1
 | Değişken | Varsayılan | Açıklama |
 |---|---|---|
 | `INSTANCE_NAME` | `a1-free` | Sunucu adı. Bu adla canlı sunucu varsa betik bir şey yapmaz |
-| `OCPU` / `MEMORY_GB` | `2` / `12` | Açılacak sunucunun boyutu |
+| `OCPU` / `MEMORY_GB` | `2` / `12` | Hedef sunucu boyutu |
+| `SMALL` | `1:6` | Hedef boyut yoksa açılacak küçük boyut (`OCPU:GB`), sonra hedefe büyütülür. `SMALL=` ile kapanır |
 | `FREE_OCPU` / `FREE_MEM` | `2` / `12` | Hesabın ücretsiz A1 sınırı. Toplam kullanım bunu aşacaksa istek gönderilmez |
 | `BOOT_GB` | boş (~47 GB) | Disk boyutu. Ücretsiz blok depolama toplamı 200 GB |
 | `SSH_PUB` | `~/.ssh/oracle_a1.pub` | Sunucuya yüklenecek SSH açık anahtarı |
@@ -171,7 +177,8 @@ Hepsi ortam değişkeniyle değiştirilebilir. Varsayılanlar tek bir 2 OCPU / 1
 | `NOTIFY_URL` | boş | Sunucu açılınca buraya POST atılır (ntfy uyumlu) |
 | `SLEEP_AD` / `SLEEP_ROUND` | `15` / `120` | AD'ler ve turlar arası bekleme (sn) |
 
-Çıkış kodları: `0` sunucu hazır, `10` bu turda kapasite yok, `1` yapılandırma ya da API
+Çıkış kodları: `0` sunucu hazır (tam boyut), `10` bu turda kapasite yok ya da küçük sunucu
+büyütülmeyi bekliyor, `1` yapılandırma ya da API
 hatası, `3` ücretsiz kota aşılacaktı.
 
 ## Bilinmesi gerekenler
