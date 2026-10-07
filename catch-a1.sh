@@ -4,7 +4,8 @@
 # icinde kisa araliklarla acilir. Betik tum availability domain'leri dener, sunucu
 # olusunca (ya da zaten varsa) durur. Ucretsiz kotayi asacak istegi hic gondermez.
 #
-# Kucuk al, sonra buyut: hedef boyut (2/12) hicbir AD'de yoksa SMALL boyutu (1/6) denenir.
+# Kucuk al, sonra buyut: hedef boyut (2/12) hicbir AD'de yoksa SMALL boyutu (1/6) denenir;
+# launch limitine (429) takilmamak icin kucuk boyut once kapasite raporuyla kontrol edilir.
 # Kucuk sunucu varken her turda kapasite raporuna bakilir; hedef boyut icin yer varsa
 # sunucu yerinde buyutulur (Oracle bunu yaparken sunucuyu bir kez yeniden baslatir).
 #
@@ -99,19 +100,26 @@ created() {  # $1=launch ciktisi $2=AD $3=OCPU $4=GB
   notify "$title" "$NAME ($3 OCPU / $4 GB) ${ip:-IP henuz atanmadi, konsola bak}$extra"
 }
 
+# Oracle kapasite raporu: kaynak olusturmaz, launch limitine sayilmaz.
+# Cikti: AVAILABLE / OUT_OF_HOST_CAPACITY / ... (hata olursa bos, ayrinti $ERR'de)
+capacity() {  # $1=AD $2=OCPU $3=GB [$4=fault domain]
+  local fd=""
+  [ -n "${4:-}" ] && fd="\"faultDomain\":\"$4\","
+  oci compute compute-capacity-report create --compartment-id "$T" --availability-domain "$1" \
+    --shape-availabilities "[{\"instanceShape\":\"$SHAPE\",$fd\"instanceShapeConfig\":{\"ocpus\":$2,\"memoryInGBs\":$3}}]" \
+    --query 'data."shape-availabilities"[0]."availability-status"' --raw-output 2>"$ERR"
+}
+
 # Kucuk sunucuyu hedef boyuta buyutur. Oracle boyut degisikliginden once kapasite raporuna
 # bakilmasini oneriyor; rapor sunucunun AD/fault domain'inde yer gormedikce istek gonderilmez,
 # boylece basarisiz denemelerle bosuna yeniden baslatma olmaz.
 upsize() {  # $1=id $2=AD $3=FD $4=OCPU $5=GB $6=durum $7=toplam OCPU $8=toplam GB
-  local fd="" st r
+  local st r
   if [ "$6" != RUNNING ]; then log "$NAME $4 OCPU / $5 GB ($6), buyutme icin RUNNING bekleniyor"; return; fi
   awk -v u="$7" -v c="$4" -v n="$OCPU" -v f="$FREE_OCPU" -v um="$8" -v cm="$5" -v nm="$MEM" -v fm="$FREE_MEM" \
     'BEGIN { exit !(u - c + n <= f && um - cm + nm <= fm) }' ||
     { log "$NAME $4 OCPU / $5 GB; $OCPU / $MEM GB'ye buyutmek ucretsiz kotayi asar (kullanimda $7 / $8)"; return; }
-  [ -n "$3" ] && fd="\"faultDomain\":\"$3\","
-  st=$(oci compute compute-capacity-report create --compartment-id "$T" --availability-domain "$2" \
-    --shape-availabilities "[{\"instanceShape\":\"$SHAPE\",$fd\"instanceShapeConfig\":{\"ocpus\":$OCPU,\"memoryInGBs\":$MEM}}]" \
-    --query 'data."shape-availabilities"[0]."availability-status"' --raw-output 2>"$ERR")
+  st=$(capacity "$2" "$OCPU" "$MEM" "$3")
   if [ "$st" != AVAILABLE ]; then
     log "$NAME $4 OCPU / $5 GB; $OCPU / $MEM GB icin yer yok (${st:-$(why "$(cat "$ERR")")})"; return
   fi
@@ -127,7 +135,7 @@ upsize() {  # $1=id $2=AD $3=FD $4=OCPU $5=GB $6=durum $7=toplam OCPU $8=toplam 
 
 # Tek tur. 0 = sunucu hazir (tam boyut), 10 = kapasite yok / kucuk sunucu buyutulmeyi bekliyor
 round() {
-  local st mine o m myo mym ad r w size so sm n=0
+  local st mine o m myo mym ad r w size so sm cs n=0
   if ! st=$(a1_state); then log "Sunucu listesi alinamadi: $(why "$(cat "$ERR")")"; return 10; fi
   mine=$(field "$st" mine); o=$(field "$st" ocpu); m=$(field "$st" mem)
   if [ "${mine:-0}" != 0 ]; then
@@ -141,11 +149,17 @@ round() {
     'BEGIN { exit !(u + n <= f && um + nm <= fm) }' ||
     die 3 "ucretsiz kota asilacak: kullanimda ${o:-0} OCPU / ${m:-0} GB var, istenen $OCPU / $MEM, sinir $FREE_OCPU / $FREE_MEM"
 
-  # Once hedef boyut tum AD'lerde, olmazsa kucuk boyut tum AD'lerde
+  # Once hedef boyut tum AD'lerde, olmazsa kucuk boyut tum AD'lerde. Kucuk boyutu her turda
+  # korlemesine denemek launch cagrisini ikiye katlayip 429'a yol aciyor (tek AD'li Zurih'te
+  # ikinci deneme hemen 429 aldi); bu yuzden kucuk boyut once kapasite raporuna soruluyor.
   for size in "$OCPU:$MEM" ${SMALL:+"$SMALL"}; do
     so=${size%%:*}; sm=${size#*:}
     [ "$size" = "$OCPU:$MEM" ] || ! ge "$so" "$OCPU" || continue   # kucuk boyut hedeften kucuk olmali
     for ad in $ADS; do
+      if [ "$size" != "$OCPU:$MEM" ]; then
+        cs=$(capacity "$ad" "$so" "$sm")
+        if [ "$cs" != AVAILABLE ]; then log "$ad: $so/$sm kapasite yok (rapor: ${cs:-$(why "$(cat "$ERR")")})"; continue; fi
+      fi
       [ $n -gt 0 ] && sleep "$SLEEP_AD"; n=$((n + 1))
       r=$(launch "$ad" "$so" "$sm")
       if printf '%s' "$r" | grep -q '"lifecycle-state"'; then

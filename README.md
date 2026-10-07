@@ -19,8 +19,10 @@ Her çalışmada, her hesap için [`catch-a1.sh`](catch-a1.sh) sırasıyla şunl
 1. `a1-free` adında tam boyutlu (2 OCPU / 12 GB) bir sunucu varsa hiçbir şey yapmadan geçer.
 2. Hesaptaki tüm A1 sunucularının toplam OCPU ve RAM'ine bakar. Yeni sunucu ücretsiz
    sınırı (2 OCPU / 12 GB) aşacaksa **istek göndermeden durur**, böylece ücret çıkmaz.
-3. Bölgedeki tüm availability domain'lerde önce 2 OCPU / 12 GB, hiçbirinde yer yoksa
-   1 OCPU / 6 GB açmayı dener. Küçük boşluklar büyüklerden daha sık açılır.
+3. Bölgedeki tüm availability domain'lerde önce 2 OCPU / 12 GB açmayı dener. Hiçbirinde yer
+   yoksa 1 OCPU / 6 GB'ye geçer; küçük boşluklar büyüklerden daha sık açılır. Küçük boyut için
+   önce Oracle'ın kapasite raporuna bakılır, yer görünen AD'de açılır. Rapor launch limitine
+   sayılmadığı için her turdaki launch denemesi artmaz ve 429'a takılmaz.
 4. Küçük sunucu açıldıysa sonraki her turda, sunucunun bulunduğu AD ve fault domain için
    Oracle'ın kapasite raporuna bakar. 2 OCPU / 12 GB için yer görünce sunucuyu **yerinde
    büyütür**; Oracle bunu yaparken sunucuyu bir kez yeniden başlatır. Rapor yer göstermedikçe
